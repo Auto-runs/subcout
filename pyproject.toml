@@ -1,0 +1,60 @@
+[project]
+name = "subscout"
+version = "0.3.0"
+description = "A fast, modular subdomain reconnaissance engine for authorized security testing."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = [
+    "subdomain", "reconnaissance", "recon", "bug-bounty", "pentest",
+    "security", "osint", "dns", "enumeration", "attack-surface",
+]
+authors = [{ name = "subscout contributors" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Internet :: Name Service (DNS)",
+]
+dependencies = [
+    "aiohttp>=3.9,<4.0",
+    "dnspython>=2.4,<3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/OWNER/subscout"
+Repository = "https://github.com/OWNER/subscout"
+Issues = "https://github.com/OWNER/subscout/issues"
+
+[project.scripts]
+subscout = "subscout.cli:main"
+subscout-bench = "subscout.bench:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["subscout*"]
+
+[tool.setuptools.package-data]
+subscout = ["sources/data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

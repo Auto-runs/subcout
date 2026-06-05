@@ -1,0 +1,69 @@
+[
+  {
+    "name": "crtsh_exclude_expired",
+    "url": "https://crt.sh/?q={domain}&output=json&exclude=expired",
+    "parse": "json_objects",
+    "fields": ["name_value", "common_name"]
+  },
+  {
+    "name": "subdomaincenter",
+    "url": "https://api.subdomain.center/?domain={domain}",
+    "parse": "json_list"
+  },
+  {
+    "name": "riddler",
+    "url": "https://riddler.io/search/exportcsv?q=pld:{domain}",
+    "parse": "text_hosts"
+  },
+  {
+    "name": "commoncrawl_2023_50",
+    "url": "https://index.commoncrawl.org/CC-MAIN-2023-50-index?url=*.{domain}&output=json&fl=url&limit=20000",
+    "parse": "text_hosts"
+  },
+  {
+    "name": "certspotter_v0",
+    "url": "https://certspotter.com/api/v0/certs?domain={domain}",
+    "parse": "json_hosts"
+  },
+  {
+    "name": "hackertarget_dnslookup",
+    "url": "https://api.hackertarget.com/dnslookup/?q={domain}",
+    "parse": "text_hosts"
+  },
+  {
+    "name": "sitedossier",
+    "url": "http://www.sitedossier.com/parentdomain/{domain}",
+    "parse": "text_hosts"
+  },
+  {
+    "name": "dnsrepo",
+    "url": "https://dnsrepo.noc.org/?domain={domain}",
+    "parse": "text_hosts"
+  },
+  {
+    "name": "c99_subdomainfinder",
+    "url": "https://subdomainfinder.c99.nl/scans/{domain}",
+    "parse": "text_hosts"
+  },
+  {
+    "name": "shrewdeye",
+    "url": "https://shrewdeye.app/domains/{domain}.txt",
+    "parse": "text_lines"
+  },
+  {
+    "name": "shodan",
+    "url": "https://api.shodan.io/dns/domain/{domain}?key=$SHODAN",
+    "parse": "json_list",
+    "json_path": ["subdomains"],
+    "join_domain": true,
+    "requires_key": "$SHODAN"
+  },
+  {
+    "name": "bevigil",
+    "url": "https://osint.bevigil.com/api/{domain}/subdomains/",
+    "parse": "json_list",
+    "json_path": ["subdomains"],
+    "headers": {"X-Access-Token": "$BEVIGIL"},
+    "requires_key": "$BEVIGIL"
+  }
+]
