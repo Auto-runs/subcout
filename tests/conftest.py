@@ -33,6 +33,7 @@ def _install_stubs() -> None:
         aiohttp.ClientSession = _Session
         aiohttp.ClientTimeout = lambda **k: None
         aiohttp.TCPConnector = lambda **k: None
+        aiohttp.ClientError = type("ClientError", (Exception,), {})
         sys.modules["aiohttp"] = aiohttp
 
     if "dns" not in sys.modules:

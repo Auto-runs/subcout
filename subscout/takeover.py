@@ -18,8 +18,10 @@ on the community "can-i-take-over-xyz" project (service patterns paraphrased).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import aiohttp
 
@@ -27,6 +29,11 @@ from subscout.config import Config
 from subscout.models import Subdomain
 
 logger = logging.getLogger("subscout")
+
+# External fingerprint catalog (based on the community "can-i-take-over-xyz"
+# project, service patterns paraphrased). Editing JSON beats editing code:
+# anyone can extend coverage without touching Python.
+DATA_FILE = Path(__file__).with_name("data") / "takeover_fingerprints.json"
 
 
 @dataclass(frozen=True)
@@ -37,37 +44,50 @@ class Fingerprint:
     nxdomain: bool = False            # True if a dangling record simply NXDOMAINs
 
 
-# Compact, high-confidence subset. Extend freely - this is just a starting set.
-FINGERPRINTS: tuple[Fingerprint, ...] = (
+# Minimal high-confidence fallback used only if the JSON catalog is missing or
+# unreadable, so detection never silently turns into a no-op.
+_FALLBACK: tuple[Fingerprint, ...] = (
     Fingerprint("GitHub Pages", ("github.io",),
                 ("There isn't a GitHub Pages site here",)),
     Fingerprint("Amazon S3", ("amazonaws.com",),
                 ("NoSuchBucket", "The specified bucket does not exist")),
     Fingerprint("Heroku", ("herokudns.com", "herokuapp.com", "herokussl.com"),
                 ("No such app", "herokucdn.com/error-pages/no-such-app.html")),
-    Fingerprint("Fastly", ("fastly.net",),
-                ("Fastly error: unknown domain",)),
-    Fingerprint("Shopify", ("myshopify.com",),
-                ("Sorry, this shop is currently unavailable",)),
-    Fingerprint("Surge.sh", ("surge.sh",),
-                ("project not found",)),
-    Fingerprint("Tumblr", ("domains.tumblr.com",),
-                ("Whatever you were looking for doesn't currently exist",)),
-    Fingerprint("Pantheon", ("pantheonsite.io",),
-                ("The gods are wise, but do not know of the site",)),
-    Fingerprint("Wordpress", ("wordpress.com",),
-                ("Do you want to register",)),
-    Fingerprint("Ghost", ("ghost.io",),
-                ("The thing you were looking for is no longer here",)),
-    Fingerprint("Netlify", ("netlify.app", "netlify.com"),
-                ("Not Found - Request ID",)),
-    Fingerprint("Azure", ("azurewebsites.net", "cloudapp.net", "trafficmanager.net"),
+    Fingerprint("Microsoft Azure",
+                ("azurewebsites.net", "cloudapp.net", "trafficmanager.net"),
                 ("404 Web Site not found",), nxdomain=True),
-    Fingerprint("Bitbucket", ("bitbucket.io",),
-                ("Repository not found",)),
-    Fingerprint("Readthedocs", ("readthedocs.io",),
-                ("unknown to Read the Docs",)),
 )
+
+
+def _load_fingerprints(path: Path = DATA_FILE) -> tuple[Fingerprint, ...]:
+    """Load fingerprints from the JSON catalog; fall back on any error."""
+    try:
+        specs = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("takeover: could not load %s (%s); using fallback set", path, exc)
+        return _FALLBACK
+
+    out: list[Fingerprint] = []
+    for spec in specs:
+        service = (spec.get("service") or "").strip()
+        cnames = tuple(c.lower() for c in spec.get("cname", []) if c)
+        if not service or not cnames:
+            continue
+        out.append(Fingerprint(
+            service=service,
+            cname_patterns=cnames,
+            body_signatures=tuple(spec.get("fingerprint", []) or ()),
+            nxdomain=bool(spec.get("nxdomain", False)),
+        ))
+    if not out:
+        logger.warning("takeover: empty catalog at %s; using fallback set", path)
+        return _FALLBACK
+    logger.debug("takeover: loaded %d fingerprint(s)", len(out))
+    return tuple(out)
+
+
+# Loaded once at import time.
+FINGERPRINTS: tuple[Fingerprint, ...] = _load_fingerprints()
 
 
 def match_fingerprints(cname: str | None) -> list[Fingerprint]:

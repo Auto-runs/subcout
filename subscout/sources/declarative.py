@@ -84,6 +84,14 @@ class DeclarativeSource(Source):
             return True
         return bool(_resolve_token(self._requires, self.config))
 
+    def health_url(self, domain: str) -> str | None:
+        """Resolve the spec URL for *domain* (with key substitution) for probing."""
+        try:
+            url = self.spec["url"].format(domain=domain)
+        except (KeyError, IndexError):
+            return None
+        return self._substitute_url_tokens(url)
+
     def _headers(self) -> dict:
         out = {}
         for k, v in (self.spec.get("headers") or {}).items():

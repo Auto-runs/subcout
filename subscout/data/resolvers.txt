@@ -1,0 +1,41 @@
+# Curated public DNS resolvers bundled with subscout.
+#
+# These are well-known, reliable anycast recursive resolvers. They are still
+# health-checked (puredns-style) before mass resolution, so any that are slow
+# or hijack NXDOMAIN at scan time are dropped automatically. Enable with
+# --bundled-resolvers. For very large scans, supply your own vetted list via
+# --resolvers-file (e.g. a freshly validated trickest/resolvers list).
+#
+# Cloudflare
+1.1.1.1
+1.0.0.1
+# Google
+8.8.8.8
+8.8.4.4
+# Quad9
+9.9.9.9
+149.112.112.112
+# OpenDNS
+208.67.222.222
+208.67.220.220
+# AdGuard DNS
+94.140.14.14
+94.140.15.15
+# CleanBrowsing
+185.228.168.9
+185.228.169.9
+# Control D
+76.76.2.0
+76.76.10.0
+# DNS.WATCH
+84.200.69.80
+84.200.70.40
+# Yandex
+77.88.8.8
+77.88.8.1
+# Level3
+4.2.2.1
+4.2.2.2
+# Comodo Secure DNS
+8.26.56.26
+8.20.247.20

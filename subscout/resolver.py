@@ -21,15 +21,32 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from pathlib import Path
 
 import dns.asyncresolver
 import dns.resolver
 import dns.reversename
 
 from subscout.config import Config
+from subscout.massdns import MassDNS, find_massdns
 from subscout.models import Subdomain
 
 logger = logging.getLogger("subscout")
+
+BUNDLED_RESOLVERS_FILE = Path(__file__).with_name("data") / "resolvers.txt"
+
+
+def load_bundled_resolvers() -> list[str]:
+    """Return the curated public-resolver list shipped with subscout."""
+    try:
+        text = BUNDLED_RESOLVERS_FILE.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("could not read bundled resolvers: %s", exc)
+        return []
+    return [
+        ln.strip() for ln in text.splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
 
 
 class Resolver:
@@ -42,6 +59,13 @@ class Resolver:
         self._resolver.timeout = config.dns_query_timeout
         self._resolver.lifetime = config.dns_query_timeout
         self._sem = asyncio.Semaphore(config.dns_concurrency)
+        # Optional native accelerator (detected once, used for big batches only).
+        self._massdns_bin = (
+            find_massdns(config.massdns_path) if config.use_massdns else None
+        )
+        if self._massdns_bin:
+            logger.info("massdns available at %s (used for large batches)",
+                        self._massdns_bin)
 
     # ---- resolver trust (puredns-style) -------------------------------
 
@@ -199,17 +223,20 @@ class Resolver:
 
     # ---- resolution ----------------------------------------------------
 
-    async def _resolve_one(
-        self, sub: Subdomain, wildcard_ips: set[str], wildcard_cnames: set[str]
+    def _apply_resolution(
+        self,
+        sub: Subdomain,
+        a: list[str],
+        aaaa: list[str],
+        cname: str | None,
+        wildcard_ips: set[str],
+        wildcard_cnames: set[str],
     ) -> None:
-        async with self._sem:
-            a, cname = await self._resolve_chain(sub.name)
-            aaaa = (
-                await self._query(sub.name, "AAAA")
-                if (not self.config.fast_resolve and not a)
-                else []
-            )
+        """Record A/AAAA/CNAME on *sub* and apply wildcard filtering.
 
+        Shared by the Python resolver and the massdns accelerator so both paths
+        filter false positives identically.
+        """
         sub.a_records = a
         sub.aaaa_records = aaaa
         sub.cname = cname
@@ -237,6 +264,18 @@ class Resolver:
 
         sub.resolved = True
 
+    async def _resolve_one(
+        self, sub: Subdomain, wildcard_ips: set[str], wildcard_cnames: set[str]
+    ) -> None:
+        async with self._sem:
+            a, cname = await self._resolve_chain(sub.name)
+            aaaa = (
+                await self._query(sub.name, "AAAA")
+                if (not self.config.fast_resolve and not a)
+                else []
+            )
+        self._apply_resolution(sub, a, aaaa, cname, wildcard_ips, wildcard_cnames)
+
     async def resolve_all(
         self,
         subdomains: list[Subdomain],
@@ -259,8 +298,56 @@ class Resolver:
         """Resolve raw hostnames and return only the ones that actually resolve.
 
         Used by the active modules (brute-force, permutations) where we generate
-        a large set of candidate names and only care about live hits.
+        a large set of candidate names and only care about live hits. Large
+        batches are routed through massdns when available (native throughput),
+        with a transparent fallback to the async Python resolver.
         """
+        wildcard_cnames = wildcard_cnames or set()
+        names = list(names)
+
+        if (
+            self._massdns_bin
+            and len(names) >= self.config.massdns_min_names
+        ):
+            accelerated = await self._resolve_names_massdns(
+                names, source_label, wildcard_ips, wildcard_cnames
+            )
+            if accelerated is not None:
+                return accelerated
+            logger.warning("massdns failed; falling back to Python resolver")
+
         subs = [Subdomain(name=n, sources={source_label}) for n in names]
         await self.resolve_all(subs, wildcard_ips, wildcard_cnames)
         return [s for s in subs if s.resolved]
+
+    async def _resolve_names_massdns(
+        self,
+        names: list[str],
+        source_label: str,
+        wildcard_ips: set[str],
+        wildcard_cnames: set[str],
+    ) -> list[Subdomain] | None:
+        """massdns-accelerated path. Returns None on failure (caller falls back)."""
+        massdns = MassDNS(
+            self._massdns_bin,
+            list(self._resolver.nameservers),
+            concurrency=self.config.dns_concurrency * 50,
+            timeout=max(60.0, self.config.timeout * 10),
+        )
+        try:
+            records = await massdns.resolve(names)
+        except (RuntimeError, OSError) as exc:
+            logger.warning("massdns error: %s", exc)
+            return None
+
+        hits: list[Subdomain] = []
+        for name in names:
+            rec = records.get(name.lower())
+            if not rec:
+                continue
+            a, cname = rec
+            sub = Subdomain(name=name, sources={source_label})
+            self._apply_resolution(sub, a, [], cname, wildcard_ips, wildcard_cnames)
+            if sub.resolved:
+                hits.append(sub)
+        return hits
