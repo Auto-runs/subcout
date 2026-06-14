@@ -65,10 +65,17 @@ Python package.
   errors) are retried with exponential backoff, so you stay polite and resilient.
 - **Streaming output** (`--stream`) - prints live subdomains to stderr the moment
   they're confirmed, so large scans give immediate feedback.
+- **Optional massdns acceleration** - if the
+  [`massdns`](https://github.com/blechschmidt/massdns) binary is on `PATH` (or
+  `--massdns PATH`), large active-resolution batches are pushed through it for
+  native throughput (100k+ qps); otherwise everything falls back to the built-in
+  async resolver transparently. No hard dependency - it just works faster when
+  present. Disable with `--no-massdns`.
 - **Trusted-resolver validation** (puredns-style) - health-checks every DNS
   resolver before mass resolution and drops any that hijack NXDOMAIN (captive
   portals / poisoned / lying resolvers), so brute-force stays fast *and* clean.
-  Load a big resolver list with `--resolvers-file`.
+  Load a big resolver list with `--resolvers-file`, or use the curated bundled
+  list with `--bundled-resolvers`.
 - **Wildcard-DNS detection** - random-label probes (including multi-level
   `*.*.domain`) filter wildcard false positives, by IP *and* by CNAME target.
 - **Fast resolver** - single A-query per name with the CNAME read straight from
@@ -77,8 +84,21 @@ Python package.
 - **Scope guard** - every result is constrained to the original target domain.
 - **HTTP probe** (`--probe`) - status, final URL, page title, Server header.
 - **Subdomain takeover detection** (`--takeover`) - flags dangling CNAMEs that
-  point at unclaimed third-party services (GitHub Pages, S3, Heroku, ...).
-- **Clean output** - `txt` (pipe-friendly), `json`, or `csv`.
+  point at unclaimed third-party services. Ships with **50+ service
+  fingerprints** (GitHub Pages, S3, Heroku, Azure, Shopify, Vercel, Netlify,
+  Fastly, ...) loaded from an **editable JSON catalog**
+  (`subscout/data/takeover_fingerprints.json`) - extend coverage without
+  touching code.
+- **Source health check** (`--health-check-sources`) - probes every source's
+  liveness and data return for a known domain and prints an at-a-glance report
+  (`ok` / `no-data` / `dead` / `error` / `skip`), so you know which sources are
+  actually pulling their weight before a real run.
+- **Resume / checkpointing** (`--resume FILE`) - confirmed live hosts are
+  streamed to an append-only JSONL checkpoint as they're found. Re-running with
+  the same file restores prior work (no re-emitting, no re-resolving), so an
+  interrupted multi-hour scan picks up where it left off.
+- **Clean output** - `txt` (pipe-friendly), `json`, `jsonl` (one object per
+  line - ideal for piping into `httpx` / `nuclei`), or `csv`.
 - **Declarative source catalog** - most sources are defined as JSON entries in
   `subscout/sources/data/sources.json`, so the catalog scales to dozens/hundreds
   of sources **without writing code**. Coded plugins handle the complex cases.
@@ -152,6 +172,13 @@ python -m subscout example.com --all -f json -o results.json
 python -m subscout example.com --brute --permutations --asn --tls-grab \
     --stream --resolvers-file resolvers.txt --only-resolved
 
+# Massive brute-force accelerated by massdns, resumable, piped into httpx
+python -m subscout example.com --brute -w seclists-dns.txt --massdns ./massdns \
+    --bundled-resolvers --resume scan.jsonl -f jsonl | httpx -silent
+
+# Check which data sources are alive before a run
+python -m subscout --health-check-sources
+
 # Custom wordlist (merged with the built-in one)
 python -m subscout example.com --brute --wordlist /path/to/dns-wordlist.txt
 
@@ -184,15 +211,22 @@ If installed via `pip install .`, replace `python -m subscout` with `subscout`.
 | `--probe` | HTTP(S) probe resolved hosts (+ CDN/tech fingerprint) |
 | `--takeover` | flag subdomain-takeover candidates |
 | `--stream` | print live subdomains to stderr as they're found |
+| `--resume FILE` | save/restore confirmed hosts (JSONL checkpoint) for resumable scans |
 | `--all` | brute + permutations + recursive + probe + takeover + asn + tls |
 | `--no-wildcard-filter` | keep wildcard-DNS hits |
 | `--wildcard-probes N` | random labels probed for wildcard detection |
 | `--no-fast-resolve` | query A+AAAA+CNAME separately (slower, exhaustive) |
 | `--source-rate-limit R` | max requests/sec per source (0 = unlimited) |
-| `-f {txt,json,csv}` / `-o FILE` | output format / file |
+| `-f {txt,json,jsonl,csv}` / `-o FILE` | output format / file |
 | `--resolvers 1.1.1.1,8.8.8.8` | custom DNS resolvers |
 | `--resolvers-file FILE` | newline-separated resolver IPs for mass resolution |
+| `--bundled-resolvers` | use the curated bundled public-resolver list |
 | `--no-validate-resolvers` | skip resolver health-check |
+| `--massdns PATH` | path to massdns binary (else auto-detected on PATH) |
+| `--no-massdns` | never use massdns even if available (pure-Python resolve) |
+| `--list-sources` | print available sources and exit |
+| `--health-check-sources` | probe every source's liveness/data and exit |
+| `--health-check-domain DOMAIN` | probe domain for `--health-check-sources` |
 | `--timeout`, `--dns-timeout`, `--dns-concurrency`, `--http-concurrency`, `--source-concurrency` | tuning |
 | `-v` / `-q` | verbose / quiet |
 
@@ -238,20 +272,24 @@ subscout/
   cli.py        # argparse + orchestration entrypoint
   engine.py     # recursive pipeline: passive -> resolve -> brute -> permute -> asn -> tls
   resolver.py   # async DNS + wildcard detection + health-check + reverse DNS
+  massdns.py    # optional native massdns accelerator for mass resolution
   brute.py      # active DNS brute-force
   permute.py    # altdns/gotator-style name mutations
   asn.py        # ASN/netblock discovery + reverse-DNS sweep
   tlsgrab.py    # TLS certificate SAN harvesting
-  takeover.py   # dangling-CNAME takeover detection + fingerprint DB
+  takeover.py   # dangling-CNAME takeover detection (JSON fingerprint catalog)
+  health.py     # passive-source liveness/data health checker
+  checkpoint.py # resume / append-only JSONL checkpointing
   prober.py     # async HTTP probing
   fingerprint.py# CDN/WAF/tech signature detection
   ratelimit.py  # token-bucket rate limiter + retry/backoff
   wordlists.py  # built-in wordlist + target-derived mining
   bench.py      # head-to-head benchmark harness
-  output.py     # txt / json / csv writers
+  output.py     # txt / json / jsonl / csv writers
   config.py     # tunables + env-based API keys
   models.py     # Subdomain dataclass
   utils.py      # normalisation, scope guard, host extraction
+  data/         # bundled resolvers + takeover fingerprint catalog
   sources/      # passive data sources (coded plugins + JSON catalog)
 ```
 
@@ -259,17 +297,20 @@ subscout/
 
 Honest positioning: mature tools like **subfinder**, **amass**, and **BBOT**
 have far more data sources, Go/massdns performance at huge scale, and years of
-battle-testing behind large communities. subscout doesn't claim to beat them on
-raw coverage or speed at massive scale - that needs a live benchmark (see
-`subscout-bench`), and Go + massdns still has a native edge for millions of names.
+battle-testing behind large communities. For raw resolution throughput at the
+scale of millions of names, subscout now **plugs into massdns directly**
+(`--massdns`), closing most of the native-speed gap while keeping the pure-Python
+fallback for portability.
 
 Where subscout is genuinely competitive is **technique coverage in one clean,
 hackable package**: passive (30+ sources, JSON-extensible) + active brute-force +
 target-derived iterative mutations + recursion + ASN reverse-DNS + TLS SAN
 harvesting + trusted-resolver validation + wildcard handling + HTTP
-fingerprinting + takeover detection - with a strict scope guard on by default.
-It's small enough to read in an afternoon and extend in minutes, which is exactly
-why building your own is worthwhile.
+fingerprinting + takeover detection (50+ JSON-defined fingerprints) - with a
+strict scope guard on by default, resumable checkpoints, a built-in source
+health check, and pipeline-friendly JSONL output. It's small enough to read in
+an afternoon and extend in minutes, which is exactly why building your own is
+worthwhile.
 
 To push raw coverage further, add sources (JSON entries) and plug in a large
 resolver list + wordlist (e.g. SecLists).
@@ -279,7 +320,7 @@ resolver list + wordlist (e.g. SecLists).
 ```bash
 pip install -e ".[dev]"
 ruff check subscout tests     # lint
-pytest                        # 51 unit tests, no network required
+pytest                        # unit tests, no network required
 ```
 
 CI (GitHub Actions) runs ruff + pytest on Python 3.10/3.11/3.12 for every push

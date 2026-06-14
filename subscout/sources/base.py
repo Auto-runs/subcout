@@ -97,6 +97,15 @@ class Source(abc.ABC):
         """Override to disable a source when its API key is missing."""
         return True
 
+    def health_url(self, domain: str) -> str | None:
+        """Return a representative endpoint URL for reachability checks.
+
+        Used by ``--health-check-sources`` to probe whether the upstream
+        endpoint is alive. Coded sources may override; returning None means
+        "no single URL to probe" (the checker then relies on a fetch count).
+        """
+        return None
+
     @abc.abstractmethod
     async def fetch(self, session: aiohttp.ClientSession, domain: str) -> set[str]:
         """Return a set of raw candidate hostnames for *domain*.

@@ -34,11 +34,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="comma-separated subset of sources (default: all)")
     p.add_argument("--list-sources", action="store_true",
                    help="print available sources and exit")
+    p.add_argument("--health-check-sources", action="store_true",
+                   help="probe every source's liveness/data and exit")
+    p.add_argument("--health-check-domain", metavar="DOMAIN", default="hackerone.com",
+                   help="probe domain used by --health-check-sources")
 
     p.add_argument("-o", "--output", metavar="FILE", default=None,
                    help="write results to FILE (default: stdout)")
-    p.add_argument("-f", "--format", choices=["txt", "json", "csv"], default="txt",
-                   help="output format")
+    p.add_argument("-f", "--format", choices=["txt", "json", "jsonl", "csv"],
+                   default="txt", help="output format (jsonl = one JSON/line for pipelines)")
 
     res = p.add_mutually_exclusive_group()
     res.add_argument("--resolve", dest="resolve", action="store_true", default=True,
@@ -106,9 +110,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="comma-separated DNS resolver IPs")
     p.add_argument("--resolvers-file", metavar="FILE",
                    help="newline-separated resolver IPs (for mass resolution)")
+    p.add_argument("--bundled-resolvers", action="store_true",
+                   help="use the curated bundled public-resolver list")
     p.add_argument("--no-validate-resolvers", dest="validate_resolvers",
                    action="store_false", default=True,
                    help="skip resolver health-check (use all resolvers as-is)")
+    p.add_argument("--massdns", metavar="PATH", default=None,
+                   help="path to massdns binary (else auto-detected on PATH)")
+    p.add_argument("--no-massdns", dest="use_massdns", action="store_false",
+                   default=True,
+                   help="never use massdns even if available (pure-Python resolve)")
+    p.add_argument("--resume", metavar="FILE", default=None,
+                   help="checkpoint file: save/restore confirmed hosts (JSONL)")
     p.add_argument("--stream", action="store_true",
                    help="print live subdomains to stderr as they are discovered")
 
@@ -158,6 +171,10 @@ def build_config(args: argparse.Namespace) -> Config:
         takeover=args.takeover or all_on,
         validate_resolvers=args.validate_resolvers,
         resolvers_file=args.resolvers_file,
+        use_bundled_resolvers=args.bundled_resolvers,
+        use_massdns=args.use_massdns,
+        massdns_path=args.massdns,
+        checkpoint_path=args.resume,
         asn_sweep=args.asn_sweep or all_on,
         asn_max_hosts=args.asn_max_hosts,
         asn_max_blocks=args.asn_max_blocks,
@@ -206,6 +223,16 @@ def main(argv: list[str] | None = None) -> int:
         keyless = sum(1 for p in providers if not p.requires_key)
         print(f"\n{len(providers)} sources total ({keyless} keyless, "
               f"{len(providers) - keyless} key-gated)")
+        return 0
+
+    if args.health_check_sources:
+        from subscout.health import HealthChecker, format_report
+        cfg = build_config(args)
+        providers = sorted(all_sources(), key=lambda p: p.name)
+        domain = normalize_domain(args.health_check_domain)
+        logger.info("health-checking %d source(s) against %s", len(providers), domain)
+        results = asyncio.run(HealthChecker(cfg).check(providers, domain))
+        print(format_report(results))
         return 0
 
     domains = collect_domains(args)

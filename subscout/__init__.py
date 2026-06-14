@@ -5,4 +5,4 @@ explicit bug bounty / pentest scope). You are responsible for staying in scope
 and respecting each data source's terms of service and rate limits.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

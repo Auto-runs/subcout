@@ -38,6 +38,17 @@ def write_json(subdomains: list[Subdomain], path: str | None) -> None:
             stream.close()
 
 
+def write_jsonl(subdomains: list[Subdomain], path: str | None) -> None:
+    """One compact JSON object per line - ideal for piping into httpx/nuclei."""
+    stream, close = _open(path)
+    try:
+        for sub in subdomains:
+            stream.write(json.dumps(sub.to_dict(), separators=(",", ":")) + "\n")
+    finally:
+        if close:
+            stream.close()
+
+
 def write_csv(subdomains: list[Subdomain], path: str | None) -> None:
     columns = [
         "name", "sources", "resolved", "a_records", "aaaa_records",
@@ -72,7 +83,7 @@ def write_csv(subdomains: list[Subdomain], path: str | None) -> None:
             stream.close()
 
 
-_WRITERS = {"txt": write_txt, "json": write_json, "csv": write_csv}
+_WRITERS = {"txt": write_txt, "json": write_json, "jsonl": write_jsonl, "csv": write_csv}
 
 
 def write(subdomains: list[Subdomain], fmt: str, path: str | None) -> None:

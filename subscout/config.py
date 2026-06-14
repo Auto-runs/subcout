@@ -36,7 +36,7 @@ class Config:
     dns_concurrency: int = 200      # max concurrent DNS lookups
     http_concurrency: int = 50      # max concurrent HTTP probes
     source_concurrency: int = 20    # max sources fetched in parallel
-    user_agent: str = "subscout/0.3 (+authorized-recon)"
+    user_agent: str = "subscout/0.4 (+authorized-recon)"
     retries: int = 2
 
     # Per-source politeness: cap request rate and retry transient failures with
@@ -71,6 +71,19 @@ class Config:
     # are poisoned / hijacked / lying before using them for mass resolution.
     validate_resolvers: bool = True
     resolvers_file: str | None = None  # newline-separated resolver IPs
+    # Use the bundled curated public-resolver list when no custom list is given.
+    use_bundled_resolvers: bool = False
+
+    # massdns acceleration (optional): when the binary is available, large
+    # active-resolution batches are pushed through it for native throughput;
+    # otherwise everything falls back to the async Python resolver.
+    use_massdns: bool = True            # auto-use massdns if found
+    massdns_path: str | None = None     # explicit binary path (else search PATH)
+    massdns_min_names: int = 500        # only accelerate batches at/above this size
+
+    # Resume / checkpointing: persist confirmed live hosts so an interrupted
+    # large scan can be re-run without losing (or re-emitting) prior work.
+    checkpoint_path: str | None = None
 
     # Recursive enumeration (re-enumerate discovered subdomains as new roots)
     recursive: bool = False

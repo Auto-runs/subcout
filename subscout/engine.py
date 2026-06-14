@@ -17,6 +17,7 @@ import logging
 import aiohttp
 
 from subscout.brute import BruteForcer
+from subscout.checkpoint import Checkpoint
 from subscout.config import Config
 from subscout.models import Subdomain
 from subscout.permute import Permuter
@@ -53,15 +54,18 @@ class Engine:
         self.found: dict[str, Subdomain] = {}
         self._attempted: set[str] = set()
         self._streamed: set[str] = set()
+        self._checkpoint: Checkpoint | None = None
 
     # ---- helpers -------------------------------------------------------
 
     def _emit(self, sub: Subdomain) -> None:
-        """Fire the discovery callback once per live name (de-duplicated)."""
-        if self._on_discover is None:
+        """Fire the discovery callback + checkpoint once per live name."""
+        if not (sub.resolved and sub.name not in self._streamed):
             return
-        if sub.resolved and sub.name not in self._streamed:
-            self._streamed.add(sub.name)
+        self._streamed.add(sub.name)
+        if self._checkpoint is not None:
+            self._checkpoint.append(sub)
+        if self._on_discover is not None:
             try:
                 self._on_discover(sub)
             except Exception as exc:  # noqa: BLE001 - never let output break a scan
@@ -73,9 +77,19 @@ class Engine:
         return self._resolver
 
     def _load_resolvers_file(self, resolver: Resolver) -> None:
-        """Load a newline-separated resolver list, replacing the defaults."""
+        """Load resolvers: explicit file takes priority, else bundled list.
+
+        A newline-separated file replaces the defaults entirely; the bundled
+        curated list is used only when no file is given and it is opted into.
+        """
         path = self.config.resolvers_file
         if not path:
+            if self.config.use_bundled_resolvers:
+                from subscout.resolver import load_bundled_resolvers
+                ips = load_bundled_resolvers()
+                if ips:
+                    resolver._resolver.nameservers = ips
+                    logger.info("loaded %d bundled resolver(s)", len(ips))
             return
         try:
             with open(path, encoding="utf-8") as fh:
@@ -245,6 +259,19 @@ class Engine:
         self.found = {}
         self._attempted = set()
         self._streamed = set()
+
+        # Resume from a checkpoint: pre-load confirmed hosts so they are neither
+        # lost nor re-emitted, and already-known names are not re-resolved.
+        if self.config.checkpoint_path:
+            if self._checkpoint is None:
+                self._checkpoint = Checkpoint(self.config.checkpoint_path)
+            for name, sub in self._checkpoint.load().items():
+                if not in_scope(name, self.scope_root):
+                    continue
+                self.found[name] = sub
+                self._attempted.add(name)
+                if sub.resolved:
+                    self._streamed.add(name)
 
         resolver = self._resolver_or_create() if self._needs_dns() else None
         if resolver is not None:
